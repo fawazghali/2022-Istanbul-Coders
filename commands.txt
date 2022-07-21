@@ -1,0 +1,133 @@
+/Users/fghali/NetBeansProjects/istanbulcoders/target/ic-1.0-SNAPSHOT.jar
+
+HZ CLUSTER
+docker run \
+    -it \
+    --network hazelcast-network \
+    --rm \
+    -p 5701:5701 hazelcast/hazelcast:5.1.2
+    
+    
+HZ MGMT
+% docker run \
+    --network hazelcast-network \
+    -p 8080:8080 hazelcast/management-center:latest-snapshot
+
+HZ JOB SUBMIT
+docker run -it --network hazelcast-network -v /Users/fghali/NetBeansProjects/istanbulcoders/target:/jars --rm hazelcast/hazelcast:5.1.2 hz-cli -t 172.18.0.2 submit -c com.hazelcast.istanbulcoders.ClientServer /jars/ic-1.0-SNAPSHOT.jar
+
+172.18.0.2
+
+HZ JOB LIST
+docker run -it --network hazelcast-network hazelcast/hazelcast hz-cli -t 172.18.0.2 list-jobs
+
+
+
+==========
+KAFKA DEMO
+==========
+PRE:
+
+1. HZ LOCAL CLUSTER
+docker run \
+    -it \
+    --network hazelcast-network \
+    --rm \
+    -e HZ_CLUSTERNAME=fawazghali \
+    -p 5701:5701 hazelcast/hazelcast:5.1.2
+    
+
+2. HZ SQL SHELL
+docker run --network hazelcast-network -it --rm hazelcast/hazelcast:5.1.2 hz-cli --targets fawazghali@172.18.0.2 sql
+--------------------------------------
+    
+1. Set Up a Kafka Broker
+docker run --name kafka --network hazelcast-network --rm hazelcast/hazelcast-quickstart-kafka
+
+
+2. Create a Mapping to Kafka
+CREATE MAPPING trades (
+    id BIGINT,
+    ticker VARCHAR,
+    price DECIMAL,
+    amount BIGINT)
+TYPE Kafka
+OPTIONS (
+    'valueFormat' = 'json-flat',
+    'bootstrap.servers' = 'kafka:9092'
+);
+
+3.Run a Streaming Query on the Kafka Topic
+SELECT ticker, ROUND(price * 100) AS price_cents, amount
+  FROM trades
+  WHERE price * amount > 100;
+  
+In another terminal, open another connection to the SQL shell and publish some messages to the trades topic.
+
+INSERT INTO trades VALUES
+  (1, 'ABCD', 5.5, 10),
+  (2, 'EFGH', 14, 20);
+  
+4. Enrich the Data in the Kafka Messages
+
+CREATE MAPPING companies (
+__key BIGINT,
+ticker VARCHAR,
+company VARCHAR,
+marketcap BIGINT)
+TYPE IMap
+OPTIONS (
+'keyFormat'='bigint',
+'valueFormat'='json-flat');
+
+
+INSERT INTO companies VALUES
+(1, 'ABCD', 'The ABCD', 100000),
+(2, 'EFGH', 'The EFGH', 5000000);
+
+SELECT trades.ticker, companies.company, trades.amount
+FROM trades
+JOIN companies
+ON companies.ticker = trades.ticker;
+
+INSERT INTO trades VALUES
+  (1, 'ABCD', 5.5, 10),
+  (2, 'EFGH', 14, 20);
+  
+5. Ingest Query Results into a Hazelcast Map
+CREATE MAPPING trade_map (
+__key BIGINT,
+ticker VARCHAR,
+company VARCHAR,
+amount BIGINT)
+TYPE IMap
+OPTIONS (
+'keyFormat'='bigint',
+'valueFormat'='json-flat');
+
+
+CREATE JOB ingest_trades AS
+SINK INTO trade_map
+SELECT trades.id, trades.ticker, companies.company, trades.amount
+FROM trades
+JOIN companies
+ON companies.ticker = trades.ticker;
+
+SHOW JOBS;
+
+
+INSERT INTO trades VALUES
+(1, 'ABCD', 5.5, 10),
+(2, 'EFGH', 14, 20);
+
+SELECT * FROM trade_map;
+
+
+
+6. Cancel the Job
+
+DROP JOB ingest_trades;
+
+
+
+
